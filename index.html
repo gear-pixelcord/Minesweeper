@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Minesweeper - Pixelcord.Gear</title>
+  <style>
+    :root {
+      --tile-size: 40px;
+      --font: 'Segoe UI', sans-serif;
+      --light-bg: #f0f0f0;
+      --dark-bg: #1a1a1a;
+      --light-tile: #ddd;
+      --dark-tile: #333;
+      --flag-emoji: 🚩;
+      --bomb-emoji: 💣;
+    }
+    body {
+      font-family: var(--font);
+      background-color: var(--dark-bg);
+      color: white;
+      margin: 0;
+      padding: 0;
+      text-align: center;
+    }
+    .light {
+      background-color: var(--light-bg);
+      color: black;
+    }
+    h1 { margin: 10px 0; }
+    #controls {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    button, select {
+      padding: 6px 12px;
+      font-size: 16px;
+    }
+    #board {
+      display: grid;
+      justify-content: center;
+      margin: 0 auto;
+      user-select: none;
+    }
+    .tile {
+      width: var(--tile-size);
+      height: var(--tile-size);
+      background-color: var(--dark-tile);
+      color: white;
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #444;
+    }
+    .light .tile {
+      background-color: var(--light-tile);
+      color: black;
+      border: 1px solid #aaa;
+    }
+    .revealed { background-color: #888 !important; }
+    .light .revealed { background-color: #ccc !important; }
+    .tile.flagged { background-color: #444; color: red; }
+    #message {
+      margin-top: 10px;
+      font-size: 20px;
+      font-weight: bold;
+    }
+    #footer { margin-top: 20px; font-size: 14px; opacity: 0.7; }
+  </style>
+</head>
+<body>
+  <h1>Minesweeper 🧨</h1>
+  <div id="controls">
+    <select id="difficulty">
+      <option value="easy">😺 Easy</option>
+      <option value="medium">😼 Medium</option>
+      <option value="hard">😾 Hard</option>
+    </select>
+    <button onclick="init()">New Game</button>
+    <button onclick="toggleTheme()">Toggle Theme</button>
+    <button onclick="togglePause()" id="pauseBtn">Pause</button>
+    <button onclick="toggleFlagMode()">Flag Mode</button>
+  </div>
+  <div id="timer">⏱️ 100s</div>
+  <div id="board"></div>
+  <div id="message"></div>
+  <div id="footer">🛠️ Made by Pixelcord.Gear</div>
+
+  <audio id="clickSound" src="https://freesound.org/data/previews/256/256113_3263906-lq.mp3"></audio>
+  <audio id="explosionSound" src="https://freesound.org/data/previews/178/178186_3551800-lq.mp3"></audio>
+  <audio id="winSound" src="https://freesound.org/data/previews/514/514257_10232624-lq.mp3"></audio>
+
+  <script>
+    const board = document.getElementById("board");
+    const message = document.getElementById("message");
+    const timerDisplay = document.getElementById("timer");
+    const clickSound = document.getElementById("clickSound");
+    const explosionSound = document.getElementById("explosionSound");
+    const winSound = document.getElementById("winSound");
+
+    let rows, cols, mineCount, grid = [], revealed = 0, totalSafe, gameOver = false, timer, timeLeft = 100, paused = false, flagMode = false;
+
+    function init() {
+      clearInterval(timer);
+      board.innerHTML = "";
+      message.textContent = "";
+      timeLeft = 100;
+      gameOver = false;
+      revealed = 0;
+      paused = false;
+      document.getElementById("pauseBtn").textContent = "Pause";
+
+      let difficulty = document.getElementById("difficulty").value;
+      if (difficulty === "easy") [rows, cols, mineCount] = [8, 8, 10];
+      else if (difficulty === "medium") [rows, cols, mineCount] = [12, 12, 24];
+      else [rows, cols, mineCount] = [16, 16, 45];
+
+      totalSafe = rows * cols - mineCount;
+      grid = Array(rows).fill().map(() => Array(cols).fill({}));
+
+      board.style.gridTemplateColumns = `repeat(${cols}, var(--tile-size))`;
+
+      // Place mines
+      let mines = 0;
+      while (mines < mineCount) {
+        let r = Math.floor(Math.random() * rows);
+        let c = Math.floor(Math.random() * cols);
+        if (!grid[r][c].mine) {
+          grid[r][c] = { mine: true };
+          mines++;
+        }
+      }
+
+      // Generate board UI
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          let tile = document.createElement("div");
+          tile.className = "tile";
+          tile.dataset.row = r;
+          tile.dataset.col = c;
+          tile.addEventListener("click", () => handleClick(r, c));
+          tile.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            flag(r, c);
+          });
+          board.appendChild(tile);
+          grid[r][c].element = tile;
+        }
+      }
+
+      startTimer();
+    }
+
+    function toggleTheme() {
+      document.body.classList.toggle("light");
+    }
+
+    function togglePause() {
+      paused = !paused;
+      document.getElementById("pauseBtn").textContent = paused ? "Resume" : "Pause";
+    }
+
+    function toggleFlagMode() {
+      flagMode = !flagMode;
+      message.textContent = flagMode ? "🚩 Flag mode ON" : "";
+    }
+
+    function startTimer() {
+      timerDisplay.textContent = `⏱️ ${timeLeft}s`;
+      timer = setInterval(() => {
+        if (!paused && !gameOver) {
+          timeLeft--;
+          timerDisplay.textContent = `⏱️ ${timeLeft}s`;
+          if (timeLeft <= 0) endGame(false);
+        }
+      }, 1000);
+    }
+
+    function handleClick(r, c) {
+      if (gameOver || paused) return;
+
+      let tile = grid[r][c];
+      if (tile.flagged) return;
+      if (flagMode) return flag(r, c);
+
+      if (tile.revealed) return;
+      tile.revealed = true;
+      revealed++;
+
+      clickSound.play();
+      tile.element.classList.add("revealed");
+
+      if (tile.mine) {
+        tile.element.textContent = "💥";
+        explosionSound.play();
+        endGame(false);
+        return;
+      }
+
+      let count = countMines(r, c);
+      if (count > 0) tile.element.textContent = ["", "1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"][count];
+      else flood(r, c);
+
+      if (revealed === totalSafe) endGame(true);
+    }
+
+    function flood(r, c) {
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          let nr = r + dr, nc = c + dc;
+          if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) {
+            let neighbor = grid[nr][nc];
+            if (!neighbor.revealed && !neighbor.mine) handleClick(nr, nc);
+          }
+        }
+      }
+    }
+
+    function countMines(r, c) {
+      let count = 0;
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          let nr = r + dr, nc = c + dc;
+          if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && grid[nr][nc].mine) count++;
+        }
+      }
+      return count;
+    }
+
+    function flag(r, c) {
+      let tile = grid[r][c];
+      if (tile.revealed || gameOver || paused) return;
+
+      tile.flagged = !tile.flagged;
+      tile.element.textContent = tile.flagged ? "🚩" : "";
+      tile.element.classList.toggle("flagged");
+    }
+
+    function endGame(won) {
+      clearInterval(timer);
+      gameOver = true;
+      if (won) {
+        message.textContent = "🎉 You Win!";
+        winSound.play();
+        localStorage.setItem("minesweeperBest", 100 - timeLeft);
+      } else {
+        message.textContent = "💀 Game Over!";
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            let tile = grid[r][c];
+            if (tile.mine) tile.element.textContent = "💣";
+          }
+        }
+      }
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>
